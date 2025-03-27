@@ -80,8 +80,19 @@ fastify.post('/check-leads', async (request, reply) => {
         }
         
         for (const lead of leads) {
-            const phoneNumber = lead.phoneNumber;
+            let phoneNumber = lead.phoneNumber;
             const name = lead.name || '';
+            
+            // Format phone number for Twilio (ensure it starts with +)
+            if (phoneNumber && !phoneNumber.startsWith('+')) {
+                phoneNumber = '+' + phoneNumber.replace(/\D/g, '');
+            }
+            
+            // Skip invalid phone numbers
+            if (!phoneNumber || phoneNumber.length < 10) {
+                console.warn(`Skipping invalid phone number: ${phoneNumber}`);
+                continue;
+            }
             
             // Make ChatGPT API call for initial outreach
             const response = await fetch('https://api.openai.com/v1/chat/completions', {
