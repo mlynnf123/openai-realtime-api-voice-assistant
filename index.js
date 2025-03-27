@@ -9,8 +9,8 @@ import fetch from 'node-fetch';
 // Load environment variables from .env file
 dotenv.config();
 
-// Retrieve the OpenAI API key from environment variables
-const { OPENAI_API_KEY } = process.env;
+// Retrieve the environment variables
+const { OPENAI_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER } = process.env;
 
 if (!OPENAI_API_KEY) {
     console.error('Missing OpenAI API key. Please set it in the .env file.');
@@ -18,9 +18,27 @@ if (!OPENAI_API_KEY) {
 }
 
 // Initialize Fastify
-const fastify = Fastify();
+const fastify = Fastify({
+    logger: true
+});
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
+fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function (req, body, done) {
+    try {
+        const json = JSON.parse(body);
+        done(null, json);
+    } catch (err) {
+        done(err, undefined);
+    }
+});
+
+// Add CORS headers
+fastify.addHook('onRequest', (request, reply, done) => {
+    reply.header('Access-Control-Allow-Origin', '*');
+    reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    reply.header('Access-Control-Allow-Headers', 'Content-Type');
+    done();
+});
 
 // Constants
 const SYSTEM_MESSAGE = 'You are an AI receptionist for Barts Automotive. Your job is to politely engage with the client and obtain their name, availability, and service/work required. Ask one question at a time. Do not ask for other contact information, and do not check availability, assume we are free. Ensure the conversation remains friendly and professional, and guide the user to provide these details naturally. If necessary, ask follow-up questions to gather the required information.';
@@ -46,7 +64,162 @@ const LOG_EVENT_TYPES = [
 
 // Root Route
 fastify.get('/', async (request, reply) => {
-    reply.send({ message: 'Twilio Media Stream Server is running!' });
+    reply.send({ message: 'SMS and Voice Assistant Server is running!' });
+});
+
+// Route to check and message new leads
+fastify.post('/check-leads', async (request, reply) => {
+    try {
+        if (!request.body) {
+            throw new Error('Request body is missing');
+        }
+        
+        const { leads } = request.body;
+        if (!leads || !Array.isArray(leads)) {
+            throw new Error('Invalid leads data format');
+        }
+        
+        for (const lead of leads) {
+            const phoneNumber = lead.phoneNumber;
+            const name = lead.name || '';
+            
+            // Make ChatGPT API call for initial outreach
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: "gpt-4o",
+                    messages: [
+                        {
+                            role: "system",
+                            content: "You are an AI assistant for Barts Automotive. Your task is to initiate contact with potential leads. Keep the message professional, friendly, and focused on automotive services."
+                        },
+                        {
+                            role: "user",
+                            content: `Create an initial outreach message for ${name}. Mention Barts Automotive and ask about their automotive needs.`
+                        }
+                    ]
+                })
+            });
+
+            const data = await response.json();
+            const aiResponse = data.choices[0].message.content;
+
+            // Send SMS using Twilio
+            const twilioResponse = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Basic ${Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64')}`,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    'To': phoneNumber,
+                    'From': TWILIO_PHONE_NUMBER,
+                    'Body': aiResponse
+                })
+            });
+
+            if (!twilioResponse.ok) {
+                const twilioError = await twilioResponse.json();
+                throw new Error(`Failed to send SMS: ${JSON.stringify(twilioError)}`);
+            }
+
+            // Send conversation data to webhook for tracking
+            await sendToWebhook({
+                userPhone: phoneNumber,
+                userName: name,
+                aiResponse,
+                timestamp: new Date().toISOString(),
+                type: 'initial_outreach'
+            });
+        }
+
+        reply.send({ success: true, message: "Outreach messages sent" });
+    } catch (error) {
+        console.error('Error:', error);
+        // Provide more detailed error information
+        const errorMessage = error.message || 'Unknown error';
+        const errorDetails = error.response?.data || {};
+        reply.status(500).send({ 
+            error: 'Internal server error', 
+            message: errorMessage,
+            details: errorDetails
+        });
+    }
+});
+
+// Route to handle incoming SMS
+fastify.post('/sms', async (request, reply) => {
+    const { Body: userMessage, From: userPhone } = request.body;
+
+    try {
+        // Make ChatGPT API call
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: "gpt-4o",
+                messages: [
+                    {
+                        role: "system",
+                        content: "You are an AI receptionist for Barts Automotive. Your job is to politely engage with the client and obtain their name, availability, and service/work required. Keep responses concise as this is SMS."
+                    },
+                    {
+                        role: "user",
+                        content: userMessage
+                    }
+                ]
+            })
+        });
+
+        const data = await response.json();
+        const aiResponse = data.choices[0].message.content;
+
+        // Send SMS reply using Twilio
+        const twilioResponse = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Basic ${Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64')}`,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+                'To': userPhone,
+                'From': TWILIO_PHONE_NUMBER,
+                'Body': aiResponse
+            })
+        });
+
+        if (!twilioResponse.ok) {
+            const twilioError = await twilioResponse.json();
+            throw new Error(`Failed to send SMS: ${JSON.stringify(twilioError)}`);
+        }
+
+        // Send conversation data to webhook
+        await sendToWebhook({
+            userPhone,
+            userMessage,
+            aiResponse,
+            timestamp: new Date().toISOString()
+        });
+
+        reply.send({ success: true });
+    } catch (error) {
+        console.error('Error:', error);
+        // Provide more detailed error information
+        const errorMessage = error.message || 'Unknown error';
+        const errorDetails = error.response?.data || {};
+        reply.status(500).send({ 
+            error: 'Internal server error', 
+            message: errorMessage,
+            details: errorDetails
+        });
+    }
 });
 
 // Route for Twilio to handle incoming and outgoing calls
@@ -247,31 +420,45 @@ async function makeChatGPTCompletion(transcript) {
         console.log('Full ChatGPT API response:', JSON.stringify(data, null, 2));
         return data;
     } catch (error) {
-        console.error('Error making ChatGPT completion call:', error);
-        throw error;
+        console.error('Error:', error);
+        // Provide more detailed error information
+        const errorMessage = error.message || 'Unknown error';
+        const errorDetails = error.response?.data || {};
+        reply.status(500).send({ 
+            error: 'Internal server error', 
+            message: errorMessage,
+            details: errorDetails
+        });
     }
 }
 
 // Function to send data to Make.com webhook
 async function sendToWebhook(payload) {
+    const WEBHOOK_URL = "https://hook.us1.make.com/6ip909xvgbf9bgu76ih2luo8iygn85jr";
     console.log('Sending data to webhook:', JSON.stringify(payload, null, 2));
     try {
         const response = await fetch(WEBHOOK_URL, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+                data: payload
+            })
         });
 
-        console.log('Webhook response status:', response.status);
-        if (response.ok) {
-            console.log('Data successfully sent to webhook.');
-        } else {
-            console.error('Failed to send data to webhook:', response.statusText);
+        const responseText = await response.text();
+        console.log('Webhook response:', responseText);
+
+        if (!response.ok) {
+            throw new Error(`Webhook error: ${response.status} ${response.statusText}\n${responseText}`);
         }
+        
+        return true;
     } catch (error) {
         console.error('Error sending data to webhook:', error);
+        throw error;
     }
 }
 
