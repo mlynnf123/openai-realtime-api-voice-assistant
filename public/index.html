@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bart's Automotive - Chat Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar with conversations -->
+            <div class="col-md-3 sidebar">
+                <div class="sidebar-header">
+                    <h3>Bart's Automotive</h3>
+                    <p>Chat Dashboard</p>
+                </div>
+                <div class="conversation-list" id="conversation-list">
+                    <!-- Conversations will be loaded here -->
+                    <div class="loading">Loading conversations...</div>
+                </div>
+            </div>
+            
+            <!-- Main chat area -->
+            <div class="col-md-9 main-content">
+                <div id="empty-state" class="empty-state">
+                    <h3>Select a conversation</h3>
+                    <p>Choose a conversation from the sidebar to view messages</p>
+                </div>
+                
+                <div id="chat-container" class="chat-container d-none">
+                    <div class="chat-header">
+                        <h4 id="chat-title">Conversation</h4>
+                        <p id="chat-subtitle">Phone Number</p>
+                    </div>
+                    
+                    <div class="chat-messages" id="chat-messages">
+                        <!-- Messages will be loaded here -->
+                    </div>
+                    
+                    <div class="chat-input">
+                        <form id="message-form">
+                            <div class="input-group">
+                                <input type="text" id="message-input" class="form-control" placeholder="Type a message...">
+                                <button type="submit" class="btn btn-primary">Send</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
