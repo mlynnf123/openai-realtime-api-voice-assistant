@@ -22,15 +22,26 @@ const {
     SUPABASE_API_KEY
 } = process.env;
 
+// Log environment variable status but don't exit
 if (!OPENAI_API_KEY) {
-    console.error('Missing OpenAI API key. Please set it in the .env file.');
-    process.exit(1);
+    console.error('WARNING: Missing OpenAI API key. Some functionality will not work.');
+} else {
+    console.log('OpenAI API key is set');
 }
 
 if (!SUPABASE_URL || !SUPABASE_API_KEY) {
-    console.error('Missing Supabase credentials. Please set SUPABASE_URL and SUPABASE_API_KEY in the .env file.');
-    process.exit(1);
+    console.error('WARNING: Missing Supabase credentials. Database functionality will not work.');
+} else {
+    console.log('Supabase credentials are set');
 }
+
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+    console.error('WARNING: Missing Twilio credentials. SMS functionality will not work.');
+} else {
+    console.log('Twilio credentials are set');
+}
+
+console.log(`PORT environment variable is set to: ${PORT}`);
 
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_API_KEY);
@@ -726,27 +737,39 @@ fastify.register(async (fastify) => {
 // Start the server
 const start = async () => {
     try {
-        // Check Supabase tables
-        await checkSupabaseTables();
+        console.log(`Attempting to start server on port ${PORT}`);
+        
+        // Try to check Supabase tables, but don't block server startup if it fails
+        try {
+            await checkSupabaseTables();
+        } catch (supabaseError) {
+            console.error('Error checking Supabase tables, but continuing server startup:', supabaseError);
+        }
         
         // Start the server
         await fastify.listen({ port: PORT, host: '0.0.0.0' });
         
         // Set up WebSocket server
         fastify.server.on('upgrade', (request, socket, head) => {
-            const { pathname } = new URL(request.url, 'http://localhost');
-            
-            if (pathname === '/ws') {
-                wsServer.handleUpgrade(request, socket, head, (ws) => {
-                    wsServer.emit('connection', ws, request);
-                });
+            try {
+                const { pathname } = new URL(request.url, 'http://localhost');
+                
+                if (pathname === '/ws') {
+                    wsServer.handleUpgrade(request, socket, head, (ws) => {
+                        wsServer.emit('connection', ws, request);
+                    });
+                }
+            } catch (upgradeError) {
+                console.error('Error handling WebSocket upgrade:', upgradeError);
             }
         });
         
-        console.log(`Server is listening on port ${PORT}`);
+        console.log(`Server is successfully listening on port ${PORT}`);
     } catch (err) {
-        console.error(err);
-        process.exit(1);
+        console.error('Failed to start server:', err);
+        // Don't exit the process, as Cloud Run will restart the container
+        // which could lead to a restart loop
+        console.error('Server failed to start, but process will continue running');
     }
 };
 
