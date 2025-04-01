@@ -1,0 +1,28 @@
+# Node modules
+node_modules
+npm-debug.log
+
+# Git files
+.git
+.gitignore
+
+# Environment variables
+.env
+.env.*
+
+# Development files
+*.test.js
+test-*.js
+diagnose-*.js
+
+# Documentation
+*.md
+!README.md
+
+# Logs
+logs
+*.log
+
+# Other
+.DS_Store
+.vscode
